@@ -1,20 +1,16 @@
 /* =====================================================================
-   Capital One Offers Loader — Extension Styles
-   Scoped entirely to .c1ext-* to avoid conflicts with the host page.
+   Capital One Offers Loader — Styles
    ===================================================================== */
 
 /* ── Utility ─────────────────────────────────────────────────────── */
-.c1ext-hidden {
-  display: none !important;
-}
-
-/* Ensure [hidden] attribute is never overridden by host-page CSS */
+.c1ext-hidden,
 #c1ext-toolbar [hidden],
-#c1ext-controls [hidden] {
+#c1ext-controls [hidden],
+#c1ext-filters[hidden] {
   display: none !important;
 }
 
-/* ── Toolbar wrapper ─────────────────────────────────────────────── */
+/* ── Toolbar Wrapper ─────────────────────────────────────────────── */
 #c1ext-toolbar {
   font-family: Optimist, "Helvetica Neue", Helvetica, Arial, sans-serif;
   font-size: 14px;
@@ -31,7 +27,7 @@
   box-sizing: border-box;
 }
 
-/* ── Controls row (load button + progress) ───────────────────────── */
+/* ── Controls Row ────────────────────────────────────────────────── */
 #c1ext-controls {
   display: flex;
   align-items: center;
@@ -39,8 +35,6 @@
   flex-wrap: wrap;
 }
 
-/* ── Primary button ──────────────────────────────────────────────── */
-/* !important required: Capital One's Tailwind CSS resets button styles at the element level */
 .c1ext-btn-primary {
   font-family: inherit !important;
   font-size: 14px !important;
@@ -53,9 +47,7 @@
   cursor: pointer !important;
   transition: background-color 0.15s ease, opacity 0.15s ease;
   white-space: nowrap !important;
-  line-height: 1.4 !important;
   display: inline-block !important;
-  text-align: center !important;
   box-sizing: border-box !important;
 }
 
@@ -73,7 +65,32 @@
   cursor: default !important;
 }
 
-/* ── Progress indicator ──────────────────────────────────────────── */
+.c1ext-btn-secondary {
+  font-family: inherit !important;
+  font-size: 13px !important;
+  font-weight: 500 !important;
+  color: #004977 !important;
+  background-color: #ffffff !important;
+  border: 1.5px solid #004977 !important;
+  border-radius: 6px !important;
+  padding: 6px 14px !important;
+  cursor: pointer !important;
+  transition: background-color 0.15s ease, color 0.15s ease;
+  display: inline-flex !important;
+  align-items: center !important;
+  box-sizing: border-box !important;
+}
+
+.c1ext-btn-secondary:hover:not(:disabled) {
+  background-color: #e8f0f7 !important;
+}
+
+.c1ext-btn-secondary:focus-visible {
+  outline: 3px solid #004977 !important;
+  outline-offset: 2px !important;
+}
+
+/* ── Progress Indicator ──────────────────────────────────────────── */
 #c1ext-progress {
   display: inline-flex;
   align-items: center;
@@ -82,7 +99,6 @@
   font-size: 13px;
 }
 
-/* Spinner */
 .c1ext-spinner {
   display: inline-block;
   width: 16px;
@@ -98,11 +114,36 @@
   to { transform: rotate(360deg); }
 }
 
-/* ── Filters row ─────────────────────────────────────────────────── */
+/* ── Search Input ────────────────────────────────────────────────── */
+.c1ext-search-input {
+  width: 260px;
+  height: 34px;
+  padding: 0 10px !important;
+  font-family: inherit !important;
+  font-size: 13.5px !important;
+  color: #1a1a1a !important;
+  background-color: #ffffff !important;
+  border: 1.5px solid #d4d4d4 !important;
+  border-radius: 6px !important;
+  outline: none !important;
+  box-sizing: border-box !important;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.c1ext-search-input:focus {
+  border-color: #004977 !important;
+  box-shadow: 0 0 0 2px rgba(0, 73, 119, 0.15) !important;
+}
+
+.c1ext-search-input::placeholder {
+  color: #8c8c8c;
+}
+
+/* ── Filters Row ─────────────────────────────────────────────────── */
 #c1ext-filters {
   display: flex;
   align-items: center;
-  gap: 14px;
+  gap: 12px;
   flex-wrap: wrap;
 }
 
@@ -112,7 +153,6 @@
   white-space: nowrap;
 }
 
-/* Filter group */
 .c1ext-filter-group {
   display: flex;
   align-items: center;
@@ -120,7 +160,6 @@
   flex-wrap: wrap;
 }
 
-/* Filter pill buttons */
 .c1ext-filter-btn {
   font-family: inherit !important;
   font-size: 13px !important;
@@ -151,7 +190,6 @@
   color: #ffffff !important;
 }
 
-/* Sort label */
 .c1ext-sort-label {
   display: inline-flex;
   align-items: center;
@@ -171,17 +209,7 @@
   flex-shrink: 0;
 }
 
-/* ── Summary bar ─────────────────────────────────────────────────── */
-#c1ext-summary {
-  font-size: 13px;
-  color: #555555;
-}
-
-#c1ext-summary strong {
-  color: #1a1a1a;
-}
-
-/* ── Error box ───────────────────────────────────────────────────── */
+/* ── Error Banner ────────────────────────────────────────────────── */
 .c1ext-error {
   font-size: 13px;
   color: #9b1c1c;
@@ -192,31 +220,36 @@
   margin-top: 4px;
 }
 
-/* ── Extension grid ──────────────────────────────────────────────── */
+/* ── Extension Grid ──────────────────────────────────────────────── */
 #c1ext-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
-  gap: 12px;
+  grid-template-columns: repeat(auto-fill, minmax(210px, 1fr));
+  gap: 16px;
   margin-bottom: 24px;
 }
 
-/* ── Deal tile card ──────────────────────────────────────────────── */
+/* ── Deal Tile Card ──────────────────────────────────────────────── */
 .c1ext-tile {
   background: #ffffff;
-  border: 1px solid #e5e5e5;
-  border-radius: 8px;
-  box-shadow: 1px 1px 5px 0px #d4d4d4;
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.06);
   display: flex;
   flex-direction: column;
   overflow: hidden;
   cursor: pointer;
-  transition: box-shadow 0.15s ease, transform 0.15s ease;
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
   outline: none;
+  user-select: none;
+  min-height: 220px;
+  content-visibility: auto;
+  contain-intrinsic-size: 0 220px;
 }
 
 .c1ext-tile:hover {
-  box-shadow: 2px 3px 10px 0px #c0c0c0;
-  transform: translateY(-1px);
+  transform: translateY(-2px);
+  box-shadow: 0 8px 16px -2px rgba(0, 0, 0, 0.08);
+  border-color: #cbd5e1;
 }
 
 .c1ext-tile:focus-visible {
@@ -224,63 +257,79 @@
   outline-offset: 2px;
 }
 
-.c1ext-tile:active {
-  transform: translateY(0);
-  box-shadow: 1px 1px 5px 0px #d4d4d4;
-}
-
 .c1ext-tile-inner {
   display: flex;
   flex-direction: column;
   align-items: center;
-  padding: 12px 10px 10px;
-  gap: 6px;
+  padding: 16px 14px 14px;
   height: 100%;
   box-sizing: border-box;
 }
 
-/* Logo area */
 .c1ext-tile-logo-wrap {
   display: flex;
   align-items: center;
   justify-content: center;
   width: 100%;
-  min-height: 56px;
+  height: 60px;
+  margin-bottom: 8px;
 }
 
 .c1ext-tile-logo {
-  max-width: 100%;
-  max-height: 60px;
+  max-width: 120px;
+  max-height: 50px;
   object-fit: contain;
   display: block;
 }
 
-/* Merchant name */
 .c1ext-tile-merchant {
   font-family: Optimist, "Helvetica Neue", Helvetica, Arial, sans-serif;
-  font-size: 12px;
-  font-weight: 500;
-  color: #1a1a1a;
+  font-size: 14.5px;
+  font-weight: 700;
+  color: #0f172a;
   text-align: center;
   word-break: break-word;
   line-height: 1.3;
+  margin-bottom: 4px;
 }
 
-/* Location / channel (e.g. "Online") */
 .c1ext-tile-location {
   font-family: Optimist, "Helvetica Neue", Helvetica, Arial, sans-serif;
-  font-size: 12px;
-  color: #555555;
+  font-size: 12.5px;
+  color: #64748b;
   text-align: center;
+  margin-bottom: 12px;
 }
 
-/* Reward amount — matches site green */
 .c1ext-tile-reward {
   font-family: Optimist, "Helvetica Neue", Helvetica, Arial, sans-serif;
-  font-size: 14px;
-  font-weight: 600;
-  color: rgb(37, 129, 14);
+  font-size: 13.5px;
+  font-weight: 700;
+  color: #15803d;
+  background-color: #f0fdf4;
+  border: 1px solid #bbf7d0;
+  border-radius: 9999px;
+  padding: 7px 14px;
   text-align: center;
   margin-top: auto;
-  padding-top: 4px;
+  width: 100%;
+  box-sizing: border-box;
+  transition: background-color 0.12s ease;
+}
+
+.c1ext-tile:hover .c1ext-tile-reward {
+  background-color: #dcfce7;
+  border-color: #86efac;
+}
+
+/* ── Empty State ─────────────────────────────────────────────────── */
+.c1ext-no-results {
+  grid-column: 1 / -1;
+  padding: 32px 16px;
+  text-align: center;
+  color: #767676;
+  font-size: 14px;
+  background: #fbfbfb;
+  border: 1px dashed #d4d4d4;
+  border-radius: 8px;
 }

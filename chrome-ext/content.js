@@ -1,282 +1,349 @@
 (function () {
   'use strict';
 
+  // ── Configuration ───────────────────────────────────────────────────
+  const CONFIG = {
+    MAX_RETRIES: 3,
+    DELAY_MS: 1200,
+    COOLDOWN_MS: 30000,
+    OBSERVER_TIMEOUT_MS: 15000,
+    DEFAULT_GRID_COLS: '5',
+    TILE_SELECTOR: '[data-testid^="feed-tile-"]',
+    LOAD_MORE_BUTTON_TEXT: 'View More Offers',
+    CACHE_KEY: 'c1ext_deals_cache',
+  };
+
   // ── State ──────────────────────────────────────────────────────────
   let allTiles = [];
   let currentFilter = 'all';
+  let searchQuery = '';
   let sortHighest = false;
   let isLoading = false;
-  let reactTileMap = new Map(); // merchantTLD → original React tile element
-  let sessionData = null;       // stored at load time for use in click handlers
+  let sessionData = null;
+  const reactTileMap = new Map();
 
-  // ── Utilities ──────────────────────────────────────────────────────
-  function delay(ms) {
-    return new Promise(r => setTimeout(r, ms));
+  // ── Card Template ──────────────────────────────────────────────────
+  const cardTemplate = document.createElement('div');
+  cardTemplate.className = 'c1ext-tile';
+  cardTemplate.setAttribute('role', 'button');
+  cardTemplate.setAttribute('tabindex', '0');
+  cardTemplate.innerHTML = `
+    <div class="c1ext-tile-inner">
+      <div class="c1ext-tile-logo-wrap"><img class="c1ext-tile-logo" loading="lazy" alt=""></div>
+      <div class="c1ext-tile-merchant"></div>
+      <div class="c1ext-tile-location"></div>
+      <div class="c1ext-tile-reward"></div>
+    </div>
+  `;
+
+  // ── Helpers ────────────────────────────────────────────────────────
+  const delay = ms => new Promise(r => setTimeout(r, ms));
+
+  function isFeedPage() {
+    return location.pathname.startsWith('/feed') && !location.pathname.includes('/offers/');
   }
 
   function parseRewardValue(text) {
     if (!text) return 0;
-    // Strip commas so "1,000" parses as 1000
-    const t = text.replace(/,/g, '');
-    // Multiplier: "9X miles" → 9 (sort by multiplier)
-    const mult = t.match(/(\d+(?:\.\d+)?)\s*[xX]\b/);
-    if (mult) return parseFloat(mult[1]);
-    // Percentage: "30% back" → 30
-    const pct = t.match(/(\d+(?:\.\d+)?)\s*%/);
-    if (pct) return parseFloat(pct[1]);
-    // Dollar: "$5 back" or "up to $5 back" → 5
-    const dollar = t.match(/\$\s*(\d+(?:\.\d+)?)/);
-    if (dollar) return parseFloat(dollar[1]);
-    // Miles (flat or up-to): "1,000 miles" → 1000
-    const num = t.match(/(\d+(?:\.\d+)?)/);
-    if (num) return parseFloat(num[1]);
-    return 0;
+    const m = text.replace(/,/g, '').match(/(\d+(?:\.\d+)?)\s*([xX%]|miles|\$)?/);
+    return m ? parseFloat(m[1]) : 0;
   }
 
-  function classifyRewardType(buttonText) {
-    const t = (buttonText || '').toLowerCase().replace(/,/g, '');
+  function classifyRewardType(text) {
+    const t = (text || '').toLowerCase().replace(/,/g, '');
     const isUpTo = t.includes('up to');
-
     if (t.includes('%') && t.includes('back')) return 'percent';
-
-    if (t.includes('$') && t.includes('back')) {
-      return isUpTo ? 'dollar-upto' : 'dollar-flat';
-    }
-
-    // Earning Rate: multiplier like "9X miles", "3x miles"
+    if (t.includes('$') && t.includes('back')) return isUpTo ? 'dollar-upto' : 'dollar-flat';
     if (/\d+\s*x\b/.test(t) && t.includes('miles')) return 'miles-rate';
-
-    // Bonus Miles: any remaining "miles" mention
-    if (t.includes('miles')) {
-      return isUpTo ? 'miles-upto' : 'miles-flat';
-    }
-
+    if (t.includes('miles')) return isUpTo ? 'miles-upto' : 'miles-flat';
     return 'other';
   }
 
-  function escapeAttr(str) {
-    return (str || '')
-      .replace(/&/g, '&amp;')
-      .replace(/"/g, '&quot;')
-      .replace(/'/g, '&#39;');
-  }
-
-  function escapeHtml(str) {
-    return (str || '')
-      .replace(/&/g, '&amp;')
-      .replace(/</g, '&lt;')
-      .replace(/>/g, '&gt;')
-      .replace(/"/g, '&quot;');
-  }
-
-  // ── Session Extraction ─────────────────────────────────────────────
-  function getSessionData() {
+  // ── Cache Storage ──────────────────────────────────────────────────
+  function saveCache(deals, session) {
     try {
-      const session = window.__remixContext?.state?.loaderData?.root?.maybeUserSession;
-      if (!session) return null;
-      const arid = session.maybeSelectedArid || (session.arids && session.arids[0]);
-      if (!arid || !session.viewInstanceId || !session.contentSlug) return null;
-      return {
-        arid,
-        viewInstanceId: session.viewInstanceId,
-        contentSlug: session.contentSlug,
-      };
+      const data = JSON.stringify({ deals, session });
+      localStorage.setItem(CONFIG.CACHE_KEY, data);
+      sessionStorage.setItem(CONFIG.CACHE_KEY, data);
+    } catch {}
+  }
+
+  function loadCache() {
+    try {
+      const raw = localStorage.getItem(CONFIG.CACHE_KEY) || sessionStorage.getItem(CONFIG.CACHE_KEY);
+      if (!raw) return null;
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) return { deals: parsed, session: null };
+      if (parsed && Array.isArray(parsed.deals) && parsed.deals.length > 0) return parsed;
+      return null;
     } catch {
       return null;
     }
   }
 
-  // ── API Pagination ─────────────────────────────────────────────────
-  const MAX_RETRIES = 5;
+  function clearCache() {
+    try {
+      localStorage.removeItem(CONFIG.CACHE_KEY);
+      sessionStorage.removeItem(CONFIG.CACHE_KEY);
+    } catch {}
+  }
+
+  // ── Session & Navigation ───────────────────────────────────────────
+  function getSessionData() {
+    try {
+      const s = window.__reactRouterContext?.state?.loaderData?.root?.maybeUserSession ||
+                window.__reactRouterDataRouter?.state?.loaderData?.root?.maybeUserSession ||
+                window.__remixContext?.state?.loaderData?.root?.maybeUserSession;
+
+      let arid = s?.maybeSelectedArid || s?.arids?.[0];
+      let viewInstanceId = s?.viewInstanceId;
+      let contentSlug = s?.contentSlug;
+      let cols = CONFIG.DEFAULT_GRID_COLS;
+
+      for (const entry of performance.getEntriesByType('resource')) {
+        const m = entry.name?.match(/\/feed\/([^/?#]+)/);
+        if (m) {
+          const url = new URL(entry.name);
+          arid = arid || decodeURIComponent(m[1]);
+          viewInstanceId = viewInstanceId || url.searchParams.get('viewInstanceId');
+          contentSlug = contentSlug || url.searchParams.get('contentSlug') || url.searchParams.get('initialContentSlug');
+          cols = url.searchParams.get('numberOfColumnsInGrid') || cols;
+          if (arid && viewInstanceId && contentSlug) break;
+        }
+      }
+
+      if (!viewInstanceId || !contentSlug) {
+        const q = new URLSearchParams(window.location.search);
+        viewInstanceId = viewInstanceId || q.get('viewInstanceId');
+        contentSlug = contentSlug || q.get('contentSlug') || q.get('initialContentSlug');
+        cols = q.get('numberOfColumnsInGrid') || cols;
+      }
+
+      return (arid && viewInstanceId && contentSlug)
+        ? { arid, viewInstanceId, contentSlug, numberOfColumnsInGrid: cols }
+        : null;
+    } catch {
+      return null;
+    }
+  }
+
+  function buildFeedOfferId(tile) {
+    if (!sessionData) return '';
+    return btoa(JSON.stringify({
+      v: 1,
+      viewContext: JSON.stringify({
+        id: sessionData.viewInstanceId,
+        org: 'capitaloneoffers',
+        src: sessionData.contentSlug,
+        rwd: 'feed',
+      }),
+      inventory: { source: tile.type?.toLowerCase() || 'standard', merchantTLD: tile.merchantTLD },
+      offers: Array.isArray(tile.offers) ? tile.offers : ['affiliate'],
+    }));
+  }
+
+  function handleTileClick(tile) {
+    if (tile.redirectUrl) {
+      window.open(tile.redirectUrl, '_blank', 'noopener,noreferrer');
+      return;
+    }
+
+    if (sessionData) {
+      const feedOfferId = tile.id || buildFeedOfferId(tile);
+      if (feedOfferId) {
+        const url = `/feed/${encodeURIComponent(sessionData.arid)}/offers/${feedOfferId}`;
+        window.open(url, '_blank', 'noopener,noreferrer');
+        return;
+      }
+    }
+
+    const reactTile = reactTileMap.get(tile.merchantTLD);
+    if (reactTile) {
+      reactTile.click();
+    }
+  }
+
+  // ── Deal Extraction & API Fetching ─────────────────────────────────
+  function extractTiles(data) {
+    if (!Array.isArray(data)) return [];
+    const results = [];
+
+    function add(t, defaultType) {
+      if (!t?.merchantTLD) return;
+      let r = (t.buttonText || '').trim();
+      if (t.rateText && (!r || /^(shop now|learn more|view offer|redeem)/i.test(r))) {
+        r = t.rateText.trim();
+      }
+      results.push({
+        merchantTLD: t.merchantTLD,
+        merchantDisplayName: t.merchantDisplayName || t.merchantTLD,
+        text: t.text || 'Online',
+        buttonText: r || t.rateText || '',
+        imageSrc: (t.imageSrc && t.imageSrc.startsWith('https://')) ? t.imageSrc : '',
+        id: t.id,
+        offers: t.offers || t.offerSources,
+        type: t.type || defaultType || 'Standard',
+        redirectUrl: t.redirectUrl,
+      });
+    }
+
+    for (const item of data) {
+      if (!item) continue;
+      if (item.type === 'Carousel' && Array.isArray(item.tiles)) {
+        item.tiles.forEach(sub => add(sub, 'Carousel'));
+      } else {
+        add(item, item.type);
+      }
+    }
+    return results;
+  }
 
   async function fetchAllDeals(session, onProgress) {
     const tiles = [];
+    const seen = new Set();
     let cursor = null;
 
     while (true) {
-      const params = new URLSearchParams({
-        numberOfColumnsInGrid: '3',
+      const p = new URLSearchParams({
+        numberOfColumnsInGrid: session.numberOfColumnsInGrid || CONFIG.DEFAULT_GRID_COLS,
         viewInstanceId: session.viewInstanceId,
         contentSlug: session.contentSlug,
       });
-      // Note: URLSearchParams.append already percent-encodes values — do NOT
-      // pre-encode the cursor or it will be double-encoded on the wire.
-      if (cursor) params.append('cursor', cursor);
+      if (cursor) p.append('cursor', cursor);
 
-      const url = `/feed/${encodeURIComponent(session.arid)}?${params.toString()}`;
-
+      const url = `/feed/${encodeURIComponent(session.arid)}?${p.toString()}`;
       let resp;
       let retries = 0;
+
       while (true) {
         try {
-          resp = await fetch(url, {
-            credentials: 'include',
-            headers: { Accept: '*/*' },
-          });
-        } catch (err) {
-          throw new Error('NETWORK_ERROR');
+          resp = await fetch(url, { credentials: 'include', headers: { Accept: '*/*' } });
+        } catch {
+          throw new Error('Network error — please check your connection.');
         }
 
         if (resp.status === 429) {
           retries++;
-          if (retries > MAX_RETRIES) throw new Error('RATE_LIMITED');
-          updateProgress(`Rate limited — retrying (${retries}/${MAX_RETRIES})...`);
-          await delay(2000 * retries); // exponential back-off
+          if (retries > CONFIG.MAX_RETRIES) {
+            if (tiles.length > 0) return tiles;
+            throw new Error('Rate limit reached — please wait a moment and try again.');
+          }
+          const retryAfter = parseInt(resp.headers.get('Retry-After'), 10);
+          const waitMs = (!isNaN(retryAfter) && retryAfter > 0 && retryAfter <= 60)
+            ? retryAfter * 1000
+            : CONFIG.COOLDOWN_MS * retries;
+
+          updateProgress(`Rate limited — cooling down ${Math.round(waitMs / 1000)}s...`);
+          await delay(waitMs);
           continue;
         }
-        break; // any non-429 response exits the retry loop
+        break;
       }
 
-      if (resp.status === 401 || resp.status === 403) throw new Error('SESSION_EXPIRED');
-      if (!resp.ok) throw new Error(`HTTP_${resp.status}`);
+      if (resp.status === 401 || resp.status === 403) throw new Error('Session expired — please refresh.');
+      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
 
-      let page;
-      try {
-        page = await resp.json();
-      } catch {
-        throw new Error('PARSE_ERROR');
+      const page = await resp.json().catch(() => { throw new Error('Unexpected API response.'); });
+
+      for (const t of extractTiles(page.data)) {
+        const key = `${t.merchantTLD}::${t.buttonText}`;
+        if (!seen.has(key)) {
+          seen.add(key);
+          t._rewardType = classifyRewardType(t.buttonText);
+          t._rewardValue = parseRewardValue(t.buttonText);
+          tiles.push(t);
+        }
       }
-
-      const pageTiles = (page.data || []).filter(t => t.type === 'Standard');
-      pageTiles.forEach(t => {
-        t._rewardType = classifyRewardType(t.buttonText);
-      });
-      tiles.push(...pageTiles);
       onProgress(tiles.length);
 
-      if (!page.cursor) break;
+      if (!page.cursor || page.cursor === cursor) break;
       cursor = page.cursor;
-      await delay(150);
+      await delay(CONFIG.DELAY_MS);
     }
 
     return tiles;
   }
 
-  // ── React Tile Map ─────────────────────────────────────────────────
-  // Decode each tile's data-testid (base64 JSON) to extract merchantTLD,
-  // building a lookup map so we can delegate clicks to React's handlers.
+  // ── DOM Helpers & Card Rendering ───────────────────────────────────
   function buildReactTileMap() {
-    reactTileMap = new Map();
-    document.querySelectorAll('[data-testid^="feed-tile-"]').forEach(el => {
+    reactTileMap.clear();
+    document.querySelectorAll(CONFIG.TILE_SELECTOR).forEach(el => {
       try {
-        const b64 = el.dataset.testid.replace('feed-tile-', '');
-        const data = JSON.parse(atob(b64));
+        const data = JSON.parse(atob(el.dataset.testid.slice(10)));
         const merchant = data.inventory?.merchantTLD;
         if (merchant) reactTileMap.set(merchant, el);
       } catch {}
     });
   }
 
-  // Construct the base64 feedOfferId that the Remix route expects.
-  // Used only for paginated tiles with no corresponding React element.
-  function buildFeedOfferId(tile) {
-    const viewContext = JSON.stringify({
-      id: sessionData.viewInstanceId,
-      src: sessionData.contentSlug,
-      rwd: 'feed',
-    });
-    const offerData = {
-      v: 1,
-      viewContext,
-      inventory: { source: 'standard', merchantTLD: tile.merchantTLD },
-      // Use offers array from tile data if present; default to affiliate
-      offers: Array.isArray(tile.offers) ? tile.offers : ['affiliate'],
-    };
-    return btoa(JSON.stringify(offerData));
-  }
-
-  function handleTileClick(tile) {
-    const reactTile = reactTileMap.get(tile.merchantTLD);
-    if (reactTile) {
-      // Delegate to the original React element — click() fires even when
-      // the element is hidden via display:none; React's root event listener
-      // will still receive and handle the event.
-      reactTile.click();
-    } else if (sessionData && window.__remixRouter) {
-      // Paginated tile: construct the offer detail URL and navigate
-      const feedOfferId = buildFeedOfferId(tile);
-      const url = `/feed/${encodeURIComponent(sessionData.arid)}/offers/${feedOfferId}`;
-      window.__remixRouter.navigate(url);
-    }
-  }
-
-  // ── DOM Helpers ────────────────────────────────────────────────────
   function findGridContainer() {
-    const firstTile = document.querySelector('[data-testid^="feed-tile-"]');
-    return firstTile ? firstTile.parentElement : null;
+    return document.querySelector(CONFIG.TILE_SELECTOR)?.parentElement || null;
   }
 
   function findLoadMoreButton() {
     return Array.from(document.querySelectorAll('button')).find(
-      b => b.textContent.trim() === 'View More Offers'
+      b => b.textContent.trim() === CONFIG.LOAD_MORE_BUTTON_TEXT
     );
   }
 
-  // ── Card Builder ───────────────────────────────────────────────────
-  function buildCard(tile) {
-    const card = document.createElement('div');
-    card.className = 'c1ext-tile';
-    card.dataset.rewardType = tile._rewardType;
-    card.setAttribute('role', 'button');
-    card.setAttribute('tabindex', '0');
-
-    // Only allow https:// image URLs to prevent javascript: or data: URI injection
-    const rawSrc = tile.imageSrc || '';
-    const imgSrc = rawSrc.startsWith('https://') ? escapeAttr(rawSrc) : '';
-    const altText = escapeAttr(tile.merchantTLD);
-    const location = escapeHtml(tile.text);
-    const reward = escapeHtml(tile.buttonText);
-    const merchant = escapeHtml(tile.merchantTLD);
-
-    card.innerHTML = `
-      <div class="c1ext-tile-inner">
-        <div class="c1ext-tile-logo-wrap">
-          ${imgSrc ? `<img class="c1ext-tile-logo" src="${imgSrc}" alt="${altText}" loading="lazy">` : ''}
-        </div>
-        <div class="c1ext-tile-merchant">${merchant}</div>
-        <div class="c1ext-tile-location">${location}</div>
-        <div class="c1ext-tile-reward">${reward}</div>
-      </div>
-    `;
-
-    card.addEventListener('click', () => handleTileClick(tile));
-    card.addEventListener('keydown', e => {
-      if (e.key === 'Enter' || e.key === ' ') {
-        e.preventDefault();
-        handleTileClick(tile);
-      }
+  function hideVanillaTiles(hide) {
+    document.querySelectorAll(CONFIG.TILE_SELECTOR).forEach(el => {
+      el.classList.toggle('c1ext-hidden', hide);
     });
+    findLoadMoreButton()?.classList.toggle('c1ext-hidden', hide);
+  }
+
+  function buildCard(tile) {
+    const card = cardTemplate.cloneNode(true);
+    card._tileData = tile;
+
+    const img = card.querySelector('.c1ext-tile-logo');
+    if (tile.imageSrc) {
+      img.src = tile.imageSrc;
+      img.alt = tile.merchantTLD || '';
+    } else {
+      img.remove();
+    }
+
+    card.querySelector('.c1ext-tile-merchant').textContent = tile.merchantDisplayName || tile.merchantTLD;
+    card.querySelector('.c1ext-tile-location').textContent = tile.text || 'Online';
+    card.querySelector('.c1ext-tile-reward').textContent = tile.buttonText || '';
 
     return card;
   }
 
-  // ── Render ─────────────────────────────────────────────────────────
+  function matchesSearch(tile, query) {
+    if (!query) return true;
+    const terms = query.toLowerCase().split(/\s+/).filter(Boolean);
+    if (terms.length === 0) return true;
+    const hay = `${tile.merchantDisplayName || ''} ${tile.merchantTLD || ''} ${tile.text || ''} ${tile.buttonText || ''}`.toLowerCase();
+    return terms.every(term => hay.includes(term));
+  }
+
   function renderGrid() {
     const grid = document.getElementById('c1ext-grid');
     if (!grid) return;
 
     let visible = allTiles.filter(t =>
-      currentFilter === 'all' || t._rewardType === currentFilter
+      (currentFilter === 'all' || t._rewardType === currentFilter) && matchesSearch(t, searchQuery)
     );
 
     if (sortHighest) {
-      visible = [...visible].sort(
-        (a, b) => parseRewardValue(b.buttonText) - parseRewardValue(a.buttonText)
-      );
+      visible = [...visible].sort((a, b) => b._rewardValue - a._rewardValue);
     }
 
-    // Use DocumentFragment for efficient bulk DOM insertion
     const frag = document.createDocumentFragment();
-    visible.forEach(t => frag.appendChild(buildCard(t)));
+    if (visible.length === 0 && allTiles.length > 0) {
+      const emptyDiv = document.createElement('div');
+      emptyDiv.className = 'c1ext-no-results';
+      emptyDiv.textContent = 'No deals found';
+      frag.appendChild(emptyDiv);
+    } else {
+      for (const t of visible) frag.appendChild(buildCard(t));
+    }
     grid.replaceChildren(frag);
-
-    const visibleEl = document.getElementById('c1ext-visible');
-    const totalEl = document.getElementById('c1ext-total');
-    if (visibleEl) visibleEl.textContent = visible.length;
-    if (totalEl) totalEl.textContent = allTiles.length;
   }
 
-  // ── UI Updates ─────────────────────────────────────────────────────
   function updateProgress(msg) {
     const el = document.getElementById('c1ext-progress-text');
     if (el) el.textContent = msg;
@@ -285,11 +352,7 @@
   function showError(msg) {
     const toolbar = document.getElementById('c1ext-toolbar');
     if (!toolbar) return;
-
-    // Remove any existing error
-    const existing = toolbar.querySelector('.c1ext-error');
-    if (existing) existing.remove();
-
+    toolbar.querySelector('.c1ext-error')?.remove();
     const err = document.createElement('div');
     err.className = 'c1ext-error';
     err.textContent = msg;
@@ -302,222 +365,220 @@
     }
   }
 
+  function setLoadedUI(isLoaded) {
+    hideVanillaTiles(isLoaded);
+
+    const btn = document.getElementById('c1ext-load-btn');
+    const reloadBtn = document.getElementById('c1ext-reload-btn');
+    const progress = document.getElementById('c1ext-progress');
+    const searchInput = document.getElementById('c1ext-search-input');
+    const filters = document.getElementById('c1ext-filters');
+
+    if (btn) {
+      btn.textContent = isLoaded ? `\u2713 All ${allTiles.length} Deals Loaded` : 'Load All Deals';
+      btn.disabled = isLoaded;
+    }
+    if (reloadBtn) reloadBtn.hidden = !isLoaded;
+    if (progress) progress.hidden = isLoaded;
+    if (searchInput) searchInput.hidden = !isLoaded;
+    if (filters) filters.hidden = !isLoaded;
+  }
+
   // ── Toolbar Injection ──────────────────────────────────────────────
   function injectToolbar(container) {
-    if (document.getElementById('c1ext-toolbar')) return; // already injected
+    if (document.getElementById('c1ext-toolbar')) return;
 
     const toolbar = document.createElement('div');
     toolbar.id = 'c1ext-toolbar';
-    toolbar.setAttribute('aria-label', 'Capital One Offers Loader controls');
     toolbar.innerHTML = `
       <div id="c1ext-controls">
-        <button id="c1ext-load-btn" class="c1ext-btn-primary" type="button">
-          Load All Deals
-        </button>
+        <button id="c1ext-load-btn" class="c1ext-btn-primary" type="button">Load All Deals</button>
+        <button id="c1ext-reload-btn" class="c1ext-btn-secondary" type="button" hidden title="Clear cache and reprocess fresh deals from API">&#x21bb; Reload Deals</button>
+        <input type="search" id="c1ext-search-input" class="c1ext-search-input" placeholder="Search loaded deals..." autocomplete="off" spellcheck="false" hidden>
         <span id="c1ext-progress" hidden>
-          <span class="c1ext-spinner" aria-hidden="true"></span>
+          <span class="c1ext-spinner"></span>
           <span id="c1ext-progress-text">Loading...</span>
         </span>
       </div>
       <div id="c1ext-filters" hidden>
-        <span class="c1ext-filter-label">Filter by reward type:</span>
-        <div class="c1ext-filter-group" role="group" aria-label="Filter deals">
-          <button class="c1ext-filter-btn c1ext-active" data-filter="all"         type="button">All</button>
-          <button class="c1ext-filter-btn"               data-filter="percent"    type="button">% Back</button>
-          <button class="c1ext-filter-btn"               data-filter="dollar-upto"  type="button">$ Back (Up To)</button>
-          <button class="c1ext-filter-btn"               data-filter="dollar-flat"  type="button">$ Back (Flat)</button>
-          <button class="c1ext-filter-btn"               data-filter="miles-rate" type="button">Earning Rate</button>
-          <button class="c1ext-filter-btn"               data-filter="miles-upto" type="button">Bonus Miles (Up To)</button>
-          <button class="c1ext-filter-btn"               data-filter="miles-flat" type="button">Bonus Miles (Flat)</button>
+        <span class="c1ext-filter-label">Filter:</span>
+        <div class="c1ext-filter-group">
+          <button class="c1ext-filter-btn c1ext-active" data-filter="all" type="button">All</button>
+          <button class="c1ext-filter-btn" data-filter="percent" type="button">% Back</button>
+          <button class="c1ext-filter-btn" data-filter="dollar-upto" type="button">$ Back (Up To)</button>
+          <button class="c1ext-filter-btn" data-filter="dollar-flat" type="button">$ Back (Flat)</button>
+          <button class="c1ext-filter-btn" data-filter="miles-rate" type="button">Earning Rate</button>
+          <button class="c1ext-filter-btn" data-filter="miles-upto" type="button">Bonus Miles (Up To)</button>
+          <button class="c1ext-filter-btn" data-filter="miles-flat" type="button">Bonus Miles (Flat)</button>
         </div>
         <label class="c1ext-sort-label">
           <input type="checkbox" id="c1ext-sort-toggle">
           <span>Sort: Highest First</span>
         </label>
       </div>
-      <div id="c1ext-summary" hidden>
-        Showing <strong><span id="c1ext-visible">0</span></strong> of
-        <strong><span id="c1ext-total">0</span></strong> deals
-      </div>
     `;
 
-    // Extension grid — sibling of the original grid container
     const extGrid = document.createElement('div');
     extGrid.id = 'c1ext-grid';
-    extGrid.setAttribute('aria-label', 'Capital One deals');
 
-    // Insert toolbar and extension grid BEFORE the original grid container
+    extGrid.addEventListener('click', e => {
+      const card = e.target.closest('.c1ext-tile');
+      if (card?._tileData) handleTileClick(card._tileData);
+    });
+
     container.parentElement.insertBefore(toolbar, container);
     container.parentElement.insertBefore(extGrid, container);
 
-    // Wire up events
-    document.getElementById('c1ext-load-btn').addEventListener('click', handleLoadAll);
-
-    document.querySelectorAll('.c1ext-filter-btn').forEach(btn => {
-      btn.addEventListener('click', () => {
-        document.querySelectorAll('.c1ext-filter-btn').forEach(b => {
-          b.classList.remove('c1ext-active');
-          b.setAttribute('aria-pressed', 'false');
-        });
-        btn.classList.add('c1ext-active');
-        btn.setAttribute('aria-pressed', 'true');
-        currentFilter = btn.dataset.filter;
-        renderGrid();
-      });
+    const searchInput = toolbar.querySelector('#c1ext-search-input');
+    searchInput?.addEventListener('input', e => {
+      searchQuery = e.target.value.trim();
+      renderGrid();
     });
 
-    document.getElementById('c1ext-sort-toggle').addEventListener('change', e => {
+    toolbar.querySelector('.c1ext-filter-group').addEventListener('click', e => {
+      const btn = e.target.closest('.c1ext-filter-btn');
+      if (!btn || btn.dataset.filter === currentFilter) return;
+
+      toolbar.querySelectorAll('.c1ext-filter-btn').forEach(b => {
+        b.classList.toggle('c1ext-active', b === btn);
+      });
+
+      currentFilter = btn.dataset.filter;
+      renderGrid();
+    });
+
+    toolbar.querySelector('#c1ext-sort-toggle').addEventListener('change', e => {
       sortHighest = e.target.checked;
       renderGrid();
     });
+
+    toolbar.querySelector('#c1ext-load-btn').addEventListener('click', () => handleLoadAll(false));
+    toolbar.querySelector('#c1ext-reload-btn').addEventListener('click', () => handleLoadAll(true));
   }
 
-  // ── Load Handler ───────────────────────────────────────────────────
-  async function handleLoadAll() {
+  // ── Load & Reload Handler ──────────────────────────────────────────
+  async function handleLoadAll(forceRefresh = false) {
     if (isLoading) return;
     isLoading = true;
 
     const session = getSessionData();
     if (!session) {
-      showError(
-        'Could not read session data. Please make sure you are logged in to Capital One Offers.'
-      );
+      showError('Could not read session data. Please ensure you are logged into Capital One Offers.');
       isLoading = false;
       return;
     }
 
-    const btn = document.getElementById('c1ext-load-btn');
-    const progress = document.getElementById('c1ext-progress');
-    const filters = document.getElementById('c1ext-filters');
-    const summary = document.getElementById('c1ext-summary');
-    const gridContainer = findGridContainer();
-    const loadMoreBtn = findLoadMoreButton();
+    if (forceRefresh) {
+      clearCache();
+      allTiles = [];
+    }
 
-    // Update UI state
+    const btn = document.getElementById('c1ext-load-btn');
+    const reloadBtn = document.getElementById('c1ext-reload-btn');
+    const progress = document.getElementById('c1ext-progress');
+
     if (btn) {
       btn.disabled = true;
       btn.textContent = 'Loading...';
     }
-    if (progress) progress.removeAttribute('hidden');
+    if (reloadBtn) reloadBtn.hidden = true;
+    if (progress) progress.hidden = false;
     updateProgress('Starting...');
 
-    // Capture React tile elements BEFORE hiding — map used for click delegation
     sessionData = session;
     buildReactTileMap();
 
-    // Hide original feed elements while extension renders
-    if (gridContainer) gridContainer.classList.add('c1ext-hidden');
-    // Hide only the button itself (not a parent container) to avoid hiding large page sections
-    if (loadMoreBtn) loadMoreBtn.classList.add('c1ext-hidden');
-
     try {
-      allTiles = await fetchAllDeals(session, count => {
-        updateProgress(`Loaded ${count} deals so far...`);
-      });
-
-      // Success state
-      if (btn) {
-        btn.textContent = `\u2713 All ${allTiles.length} Deals Loaded`;
-        btn.disabled = true;
-      }
-      if (progress) progress.setAttribute('hidden', '');
-      if (filters) filters.removeAttribute('hidden');
-      if (summary) summary.removeAttribute('hidden');
-
+      allTiles = await fetchAllDeals(session, count => updateProgress(`Loaded ${count} deals...`));
+      saveCache(allTiles, session);
+      setLoadedUI(true);
       renderGrid();
     } catch (err) {
-      // Restore original grid on error so the page stays usable
-      if (gridContainer) gridContainer.classList.remove('c1ext-hidden');
-      if (loadMoreBtn) loadMoreBtn.classList.remove('c1ext-hidden');
-
-      const messages = {
-        SESSION_EXPIRED: 'Session expired — please refresh the page and try again.',
-        NETWORK_ERROR: 'Network error — please check your connection.',
-        PARSE_ERROR: 'Unexpected API response — the page format may have changed.',
-        RATE_LIMITED: 'Too many requests — please wait a moment and try again.',
-      };
-      showError(messages[err.message] || `Error loading deals: ${err.message}`);
+      setLoadedUI(false);
+      showError(err.message);
     } finally {
       isLoading = false;
     }
   }
 
-  // ── Init ───────────────────────────────────────────────────────────
+  // ── Cache Restoration ──────────────────────────────────────────────
+  function restoreCachedDealsIfAvailable() {
+    const cached = loadCache();
+    if (!cached || !cached.deals || cached.deals.length === 0) return false;
+
+    allTiles = cached.deals;
+    sessionData = cached.session || getSessionData();
+    buildReactTileMap();
+    setLoadedUI(true);
+    renderGrid();
+    return true;
+  }
+
+  // ── Initialization & Cleanup ───────────────────────────────────────
   function resetState() {
     allTiles = [];
     currentFilter = 'all';
+    searchQuery = '';
     sortHighest = false;
     isLoading = false;
-    reactTileMap = new Map();
+    reactTileMap.clear();
     sessionData = null;
   }
 
   function init() {
-    // Remove any existing toolbar before re-injecting (e.g. after SPA navigation)
-    const existing = document.getElementById('c1ext-toolbar');
-    const existingGrid = document.getElementById('c1ext-grid');
-    if (existing) existing.remove();
-    if (existingGrid) existingGrid.remove();
+    if (!isFeedPage()) return;
+
+    document.getElementById('c1ext-toolbar')?.remove();
+    document.getElementById('c1ext-grid')?.remove();
 
     resetState();
 
     const container = findGridContainer();
-    if (!container || !container.parentElement) return;
-
-    injectToolbar(container);
+    if (container?.parentElement) {
+      injectToolbar(container);
+      restoreCachedDealsIfAvailable();
+    }
   }
 
-  // Wait for React/Remix to mount the feed tiles, with an optional timeout
-  let pendingObserver = null;
-
+  let observer = null;
   function waitAndInit() {
-    // Disconnect any previous observer before starting a new one
-    if (pendingObserver) {
-      pendingObserver.disconnect();
-      pendingObserver = null;
-    }
+    if (!isFeedPage()) return;
 
-    if (document.querySelector('[data-testid^="feed-tile-"]')) {
+    if (document.querySelector(CONFIG.TILE_SELECTOR)) {
       init();
       return;
     }
 
-    let timeoutId;
-    const obs = new MutationObserver(() => {
-      if (document.querySelector('[data-testid^="feed-tile-"]')) {
-        obs.disconnect();
-        pendingObserver = null;
-        clearTimeout(timeoutId);
+    observer?.disconnect();
+    observer = new MutationObserver(() => {
+      if (document.querySelector(CONFIG.TILE_SELECTOR)) {
+        observer.disconnect();
+        observer = null;
         init();
       }
     });
-    obs.observe(document.body, { childList: true, subtree: true });
-    pendingObserver = obs;
 
-    // Safety timeout: stop observing after 15s if tiles never appear
-    timeoutId = setTimeout(() => {
-      obs.disconnect();
-      pendingObserver = null;
-    }, 15000);
+    observer.observe(document.body, { childList: true, subtree: true });
+    setTimeout(() => {
+      if (observer) {
+        observer.disconnect();
+        observer = null;
+      }
+    }, CONFIG.OBSERVER_TIMEOUT_MS);
   }
 
-  // Handle Remix SPA navigation (pushState / back-forward)
-  // Guard against double-patching if content script runs more than once
-  if (!history.__c1extPatched) {
-    history.__c1extPatched = true;
-    const origPush = history.pushState.bind(history);
-    history.pushState = function (...args) {
-      origPush(...args);
-      if (location.pathname.startsWith('/feed')) {
-        waitAndInit();
-      }
-    };
-    window.addEventListener('popstate', () => {
-      if (location.pathname.startsWith('/feed')) {
-        waitAndInit();
-      }
-    });
-  }
+  // ── Navigation & Cache Restoration Listeners ───────────────────────
+  window.addEventListener('pageshow', () => {
+    if (isFeedPage()) {
+      waitAndInit();
+    }
+  });
+
+  window.addEventListener('popstate', () => {
+    if (isFeedPage()) {
+      setTimeout(waitAndInit, 100);
+    }
+  });
 
   waitAndInit();
 })();

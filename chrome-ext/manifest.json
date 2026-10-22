@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Capital One Offers Loader",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Automatically load all Capital One offers and filter by reward type",
   "icons": { "256": "icons/icon256.png" },
   "content_scripts": [
