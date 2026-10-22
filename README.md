@@ -1,49 +1,55 @@
-# Capital-One-Offers-Scraper
+# Capital One Offers Loader
 
-Browser extension prototypes (Chrome + Firefox) to extract Capital One offer information from pages for local review and testing. Intended for personal and development use only.
+A Google Chrome extension (Manifest V3) that loads all available Capital One Offers at once and provides fast searching, filtering, and sorting directly on the Capital One Offers feed page (`capitaloneoffers.com/feed*`). Intended for personal and development use.
 
-## Repository layout
+## Features
 
-- [chrome-ext/manifest.json](chrome-ext/manifest.json) — Chrome extension manifest
-- [chrome-ext/content.js](chrome-ext/content.js) — Chrome content script
-- [chrome-ext/content.css](chrome-ext/content.css) — Chrome styles
-- [firefox-ext/manifest.json](firefox-ext/manifest.json) — Firefox extension manifest
-- [firefox-ext/content.js](firefox-ext/content.js) — Firefox content script
+- **Load All Deals**: Automatically pages through and retrieves all active Capital One offers via the internal feed API.
+- **Persistent Caching**: Caches loaded deals in browser storage so your offers persist across page navigations without needing to re-fetch.
+- **Reload / Refresh**: Includes a "Reload Deals" button to clear cached deals and fetch fresh offers.
+- **Instant Search**: Real-time search filter for loaded deals by merchant name, online/in-store availability, or reward details.
+- **Reward Type Filtering**: Filter deals by reward type:
+  - `% Back`
+  - `$ Back (Up To)`
+  - `$ Back (Flat)`
+  - `Earning Rate` (multiplier e.g. 9X miles)
+  - `Bonus Miles (Up To)`
+  - `Bonus Miles (Flat)`
+- **Sorting**: Toggle sorting to view highest reward offers first.
+- **Native Deal Activation**: Clicking any deal tile integrates with Capital One's underlying offer activation flow or navigates directly to the offer details.
 
-## Getting started
+## Repository Layout
 
-Prerequisites: Google Chrome or Mozilla Firefox.
+- [chrome-ext/manifest.json](chrome-ext/manifest.json) — Manifest V3 extension configuration
+- [chrome-ext/content.js](chrome-ext/content.js) — Content script handling session extraction, deal pagination, caching, UI controls, search, and filtering
+- [chrome-ext/content.css](chrome-ext/content.css) — Styles for extension toolbar, grid, filters, and cards
+- [chrome-ext/icons/](chrome-ext/icons/) — Extension icon assets
 
-### Load for development — Chrome
+## Getting Started
 
-1. Open Chrome and go to `chrome://extensions/`.
-2. Enable Developer mode.
-3. Click "Load unpacked" and select the `chrome-ext` folder.
+### Prerequisites
 
-### Load for development — Firefox (temporary)
+- Google Chrome (or any Chromium-based browser supporting Manifest V3).
 
-1. Open Firefox and go to `about:debugging#/runtime/this-firefox`.
-2. Click "Load Temporary Add-on" and choose the `firefox-ext/manifest.json` file (or any file inside the `firefox-ext` folder).
+### Installation (Development Mode)
+
+1. Clone or download this repository.
+2. Open Chrome and navigate to `chrome://extensions/`.
+3. Enable **Developer mode** using the toggle in the top-right corner.
+4. Click **Load unpacked** in the top-left corner.
+5. Select the [chrome-ext](chrome-ext/) directory from this repository.
+6. Navigate to [capitaloneoffers.com/feed](https://capitaloneoffers.com/feed) and log into your Capital One account to use the extension toolbar.
 
 ## Packaging
 
-Create a distributable XPI for Firefox (PowerShell):
-
-```powershell
-Compress-Archive -Path .\firefox-ext\* -DestinationPath .\firefox-ext.xpi -Force
-```
-
-Create a ZIP for Chrome (PowerShell):
+To package the extension into a zip file for distribution (e.g., via PowerShell on Windows):
 
 ```powershell
 Compress-Archive -Path .\chrome-ext\* -DestinationPath .\chrome-ext.zip -Force
 ```
 
-## Development notes
+## Development Notes
 
-- Modify [chrome-ext/content.js](chrome-ext/content.js) and [firefox-ext/content.js](firefox-ext/content.js) to change scraping behavior.
-
-## Files of interest
-
-- [chrome-ext/](chrome-ext/)
-- [firefox-ext/](firefox-ext/)
+- The extension executes in the page context (`MAIN` world) to read session state and interact seamlessly with React/Remix state.
+- Edit [chrome-ext/content.js](chrome-ext/content.js) to adjust API parameters, delay intervals, or scraping logic.
+- Edit [chrome-ext/content.css](chrome-ext/content.css) to adjust the UI toolbar or deal card styling.
