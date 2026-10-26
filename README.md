@@ -1,6 +1,10 @@
 # Capital One Offers Loader
 
-A Google Chrome extension (Manifest V3) that loads all available Capital One Offers at once and provides fast searching, filtering, and sorting directly on the Capital One Offers feed page (`capitaloneoffers.com/feed*`). Intended for personal and development use.
+![Version](https://img.shields.io/badge/Version-1.0.1-orange.svg)
+![Manifest V3](https://img.shields.io/badge/Manifest-V3-green.svg)
+![Chrome Extension](https://img.shields.io/badge/Chrome-Extension-blue.svg)
+
+Are you tired of endlessly scrolling through Capital One Offers to find the best deals? **Capital One Offers Loader** is a powerful Google Chrome extension that supercharges your experience! It automatically loads all available offers instantly, providing advanced searching, sorting, and filtering options directly on the Capital One Offers feed page (`capitaloneoffers.com/feed*`). Say goodbye to pagination and hello to maximizing your rewards effortlessly!
 
 ## Features
 
